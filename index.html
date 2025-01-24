@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time Manager</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #333333;
+            --panel-bg: #f8f9fa;
+            --primary-color: #4CAF50;
+            --hover-color: #45a049;
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #1a1a1a;
+            --text-color: #ffffff;
+            --panel-bg: #2d2d2d;
+            --primary-color: #2e7d32;
+            --hover-color: #1b5e20;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .task-form {
+            margin-bottom: 20px;
+        }
+
+        input, select, button {
+            padding: 8px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: var(--panel-bg);
+            color: var(--text-color);
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: var(--hover-color);
+        }
+
+        .task-list {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        .task-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            background-color: var(--panel-bg);
+            border-radius: 4px;
+            cursor: move;
+        }
+
+        .timer {
+            font-size: 2em;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .calendar {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 5px;
+        }
+
+        .calendar-day {
+            padding: 10px;
+            text-align: center;
+            background-color: var(--panel-bg);
+            border-radius: 4px;
+            min-height: 80px;
+        }
+
+        .calendar-event {
+            font-size: 0.8em;
+            background: var(--primary-color);
+            color: white;
+            margin: 2px;
+            padding: 2px;
+            border-radius: 3px;
+        }
+
+        .task-category {
+            padding: 2px 5px;
+            border-radius: 3px;
+            margin-left: 10px;
+            font-size: 0.8em;
+        }
+
+        .category-work { background: #2196F3; color: white; }
+        .category-personal { background: #4CAF50; color: white; }
+        .category-shopping { background: #9C27B0; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Main Content -->
+        <div id="mainContent">
+            <!-- Task Manager -->
+            <div class="panel">
+                <h2>Task Manager</h2>
+                <form class="task-form" id="taskForm">
+                    <input type="text" id="taskInput" placeholder="New task" required>
+                    <select id="taskPriority">
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                    <select id="taskCategory">
+                        <option value="work">Work</option>
+                        <option value="personal">Personal</option>
+                        <option value="shopping">Shopping</option>
+                    </select>
+                    <input type="datetime-local" id="taskDeadline">
+                    <button type="submit">Add Task</button>
+                </form>
+                <ul class="task-list" id="taskList"></ul>
+            </div>
+
+            <!-- Time Tracker -->
+            <div class="panel">
+                <h2>Time Tracker</h2>
+                <div class="timer" id="timer">25:00</div>
+                <div style="text-align: center;">
+                    <button onclick="startTimer(1500)">Pomodoro (25m)</button>
+                    <button onclick="startTimer(300)">Short Break (5m)</button>
+                    <button onclick="resetTimer()">Reset</button>
+                    <button onclick="toggleTheme()">Toggle Dark Mode</button>
+                </div>
+            </div>
+
+            <!-- Calendar -->
+            <div class="panel" style="grid-column: span 2;">
+                <h2>Calendar</h2>
+                <div class="calendar" id="calendar"></div>
+            </div>
+
+            <!-- Reports -->
+            <div class="panel">
+                <h2>Time Reports</h2>
+                <canvas id="timeChart"></canvas>
+            </div>
+
+            <!-- Data Management -->
+            <div class="panel">
+                <h2>Data Management</h2>
+                <button onclick="exportData()">Export Data</button>
+                <input type="file" id="importFile" onchange="importData()">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // App State
+        let tasks = JSON.parse(localStorage.getItem('tasks')) || [];
+        let timeEntries = JSON.parse(localStorage.getItem('timeEntries')) || [];
+        let timerInterval;
+        let draggedItemIndex = null;
+
+        // Task Management
+        function saveTasks() {
+            localStorage.setItem('tasks', JSON.stringify(tasks));
+        }
+
+        function renderTasks() {
+            const taskList = document.getElementById('taskList');
+            taskList.innerHTML = tasks.map((task, index) => `
+                <li class="task-item" draggable="true" data-index="${index}"
+                    ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="drop(event)">
+                    <div>
+                        <input type="checkbox" ${task.completed ? 'checked' : ''} 
+                            onchange="toggleTask(${index})">
+                        <span style="text-decoration: ${task.completed ? 'line-through' : 'none'}">
+                            ${task.text} 
+                            <span class="task-category category-${task.category}">${task.category}</span>
+                            (${task.priority}) 
+                            - ${new Date(task.deadline).toLocaleString()}
+                        </span>
+                    </div>
+                    <button onclick="deleteTask(${index})">Delete</button>
+                </li>
+            `).join('');
+        }
+
+        function addTask(text, priority, category, deadline) {
+            tasks.push({
+                text,
+                priority,
+                category,
+                deadline,
+                completed: false
+            });
+            saveTasks();
+            renderTasks();
+        }
+
+        function toggleTask(index) {
+            tasks[index].completed = !tasks[index].completed;
+            saveTasks();
+            renderTasks();
+        }
+
+        function deleteTask(index) {
+            tasks.splice(index, 1);
+            saveTasks();
+            renderTasks();
+        }
+
+        // Drag and Drop
+        function dragStart(e) {
+            draggedItemIndex = parseInt(e.target.closest('.task-item').dataset.index);
+        }
+
+        function dragOver(e) {
+            e.preventDefault();
+        }
+
+        function drop(e) {
+            const targetIndex = parseInt(e.target.closest('.task-item').dataset.index);
+            const [removed] = tasks.splice(draggedItemIndex, 1);
+            tasks.splice(targetIndex, 0, removed);
+            saveTasks();
+            renderTasks();
+        }
+
+        // Time Tracking
+        function startTimer(duration) {
+            let timer = duration;
+            resetTimer();
+
+            timerInterval = setInterval(() => {
+                const minutes = Math.floor(timer / 60);
+                const seconds = timer % 60;
+                document.getElementById('timer').textContent = 
+                    `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                
+                if (--timer < 0) {
+                    clearInterval(timerInterval);
+                    showNotification('Time is up!', 'Your timer has completed');
+                    addTimeEntry('Pomodoro Session', duration/60);
+                    generateReport();
+                }
+            }, 1000);
+        }
+
+        function resetTimer() {
+            clearInterval(timerInterval);
+            document.getElementById('timer').textContent = '25:00';
+        }
+
+        // Notifications
+        function showNotification(title, message) {
+            if (Notification.permission === "granted") {
+                new Notification(title, { body: message });
+            }
+        }
+
+        // Time Reports
+        function addTimeEntry(task, duration) {
+            timeEntries.push({
+                task,
+                duration,
+                date: new Date().toISOString()
+            });
+            localStorage.setItem('timeEntries', JSON.stringify(timeEntries));
+        }
+
+        function generateReport() {
+            const ctx = document.getElementById('timeChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: timeEntries.map(entry => entry.task),
+                    datasets: [{
+                        label: 'Time Spent (minutes)',
+                        data: timeEntries.map(entry => entry.duration),
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)'
+                    }]
+                }
+            });
+        }
+
+        // Calendar
+        function generateCalendar() {
+            const calendar = document.getElementById('calendar');
+            const date = new Date();
+            const year = date.getFullYear();
+            const month = date.getMonth();
+            const firstDay = new Date(year, month, 1);
+            const lastDay = new Date(year, month + 1, 0);
+            
+            calendar.innerHTML = '';
+            
+            for (let i = 0; i < firstDay.getDay(); i++) {
+                calendar.innerHTML += `<div class="calendar-day"></div>`;
+            }
+            
+            for (let day = 1; day <= lastDay.getDate(); day++) {
+                calendar.innerHTML += `
+                    <div class="calendar-day">
+                        ${day}
+                        ${getEventsForDay(day).map(event => `
+                            <div class="calendar-event">${event}</div>
+                        `).join('')}
+                    </div>`;
+            }
+        }
+
+        function getEventsForDay(day) {
+            return tasks
+                .filter(task => new Date(task.deadline).getDate() === day)
+                .map(task => task.text);
+        }
+
+        // Data Management
+        function exportData() {
+            const data = {
+                tasks: tasks,
+                timeEntries: timeEntries
+            };
+            const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'time-management-data.json';
+            a.click();
+        }
+
+        function importData() {
+            const file = document.getElementById('importFile').files[0];
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = JSON.parse(e.target.result);
+                tasks = data.tasks;
+                timeEntries = data.timeEntries;
+                saveTasks();
+                localStorage.setItem('timeEntries', JSON.stringify(timeEntries));
+                renderTasks();
+                generateReport();
+            };
+            reader.readAsText(file);
+        }
+
+        // Dark Mode
+        function toggleTheme() {
+            document.body.dataset.theme = 
+                document.body.dataset.theme === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('theme', document.body.dataset.theme);
+        }
+
+        // Initialization
+        function initializeApp() {
+            renderTasks();
+            generateCalendar();
+            generateReport();
+            
+            if (Notification.permission !== "granted") {
+                Notification.requestPermission();
+            }
+
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.body.dataset.theme = savedTheme;
+        }
+
+        // Event Listeners
+        document.getElementById('taskForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const text = document.getElementById('taskInput').value;
+            const priority = document.getElementById('taskPriority').value;
+            const category = document.getElementById('taskCategory').value;
+            const deadline = document.getElementById('taskDeadline').value;
+            addTask(text, priority, category, deadline);
+            e.target.reset();
+        });
+
+        // Start the app
+        initializeApp();
+    </script>
+</body>
+</html>
